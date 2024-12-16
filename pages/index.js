@@ -1,10 +1,8 @@
 import { useState, useEffect } from "react";
-
 import { MainCard } from "../components/MainCard";
 import { ContentBox } from "../components/ContentBox";
 import { Header } from "../components/Header";
 import { DateAndTime } from "../components/DateAndTime";
-import { Search } from "../components/Search";
 import { MetricsBox } from "../components/MetricsBox";
 import { UnitSwitch } from "../components/UnitSwitch";
 import { LoadingScreen } from "../components/LoadingScreen";
@@ -13,72 +11,85 @@ import { ErrorScreen } from "../components/ErrorScreen";
 import styles from "../styles/Home.module.css";
 
 export const App = () => {
-  const [cityInput, setCityInput] = useState("Riga");
-  const [triggerFetch, setTriggerFetch] = useState(true);
-  const [weatherData, setWeatherData] = useState();
-  const [unitSystem, setUnitSystem] = useState("metric");
+    const [weatherData, setWeatherData] = useState(null);
+    const [unitSystem, setUnitSystem] = useState("metric");
 
-  useEffect(() => {
-    const getData = async () => {
-      const res = await fetch("api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cityInput }),
-      });
-      const data = await res.json();
-      setWeatherData({ ...data });
-      setCityInput("");
+    const changeSystem = () => {
+        setUnitSystem((prevUnit) => (prevUnit === "metric" ? "imperial" : "metric"));
     };
-    getData();
-  }, [triggerFetch]);
 
-  const changeSystem = () =>
-    unitSystem == "metric"
-      ? setUnitSystem("imperial")
-      : setUnitSystem("metric");
+    const fetchWeatherData = async (latitude, longitude) => {
+        const response = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m`
+        );
 
-  return weatherData && !weatherData.message ? (
-    <div className={styles.wrapper}>
-      <MainCard
-        city={weatherData.name}
-        country={weatherData.sys.country}
-        description={weatherData.weather[0].description}
-        iconName={weatherData.weather[0].icon}
-        unitSystem={unitSystem}
-        weatherData={weatherData}
-      />
-      <ContentBox>
-        <Header>
-          <DateAndTime weatherData={weatherData} unitSystem={unitSystem} />
-          <Search
-            placeHolder="Search a city..."
-            value={cityInput}
-            onFocus={(e) => {
-              e.target.value = "";
-              e.target.placeholder = "";
-            }}
-            onChange={(e) => setCityInput(e.target.value)}
-            onKeyDown={(e) => {
-              e.keyCode === 13 && setTriggerFetch(!triggerFetch);
-              e.target.placeholder = "Search a city...";
-            }}
-          />
-        </Header>
-        <MetricsBox weatherData={weatherData} unitSystem={unitSystem} />
-        <UnitSwitch onClick={changeSystem} unitSystem={unitSystem} />
-      </ContentBox>
-    </div>
-  ) : weatherData && weatherData.message ? (
-    <ErrorScreen errorMessage="City not found, try again!">
-      <Search
-        onFocus={(e) => (e.target.value = "")}
-        onChange={(e) => setCityInput(e.target.value)}
-        onKeyDown={(e) => e.keyCode === 13 && setTriggerFetch(!triggerFetch)}
-      />
-    </ErrorScreen>
-  ) : (
-    <LoadingScreen loadingMessage="Loading data..." />
-  );
+        if (!response.ok) {
+            throw new Error("Erreur lors de la récupération des données météo.");
+        }
+
+        const data = await response.json();
+        return data;
+    };
+
+    const loadConfig = async () => {
+        const response = await fetch('config.json');
+        if (!response.ok) {
+            throw new Error("Erreur lors du chargement de la configuration.");
+        }
+        const config = await response.json();
+        if (typeof config.latitude !== 'number' || typeof config.longitude !== 'number') {
+            throw new Error("Latitude et longitude doivent être des nombres.");
+        }
+        return config;
+    };
+
+    const getWeatherData = async () => {
+        try {
+            const config = await loadConfig();
+            const data = await fetchWeatherData(config.latitude, config.longitude);
+            if (data.error) {
+                throw new Error(data.reason);
+            }
+            setWeatherData(data);
+        } catch (error) {
+            console.error("Erreur lors de la récupération des données météo :", error);
+            setWeatherData({ error: true, reason: error.message });
+        }
+    };
+
+    useEffect(() => {
+        getWeatherData();
+        const interval = setInterval(getWeatherData, 3600000); // Récupération chaque heure
+        return () => clearInterval(interval);
+    }, []);
+
+    if (weatherData?.error) {
+        return <ErrorScreen errorMessage={weatherData.reason} />;
+    }
+
+    if (!weatherData) {
+        return <LoadingScreen loadingMessage="Loading data..." />;
+    }
+
+    return (
+        <div className={styles.wrapper}>
+            <MainCard
+                city="Lyon"
+                country="FR"
+                description={`Température: ${weatherData.hourly.temperature_2m[0]}°C`}
+                iconName="weather_icon"
+                unitSystem={unitSystem}
+                weatherData={weatherData}
+            />
+            <ContentBox>
+                <Header>
+                    <DateAndTime weatherData={weatherData} unitSystem={unitSystem} />
+                </Header>
+                <MetricsBox weatherData={weatherData} unitSystem={unitSystem} />
+                <UnitSwitch onClick={changeSystem} unitSystem={unitSystem} />
+            </ContentBox>
+        </div>
+    );
 };
 
 export default App;
